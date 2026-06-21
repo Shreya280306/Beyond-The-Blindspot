@@ -102,74 +102,60 @@ def analyze_frames_for_accessibility(
     """
     if not frames:
         return []
-    
-    return [
-        {
-            "frame_index": f["frame_index"],
-            "timestamp": f["timestamp"],
-            "frame_path": f["frame_path"],
-            "change_score": f.get("change_score"),
-            "transcript_context": f.get("transcript_context", ""),
-            "is_inaccessible": i < 3,   # only ~1 in 8 frames flagged
-            "issue_type": "diagram_or_chart",
-            "reason": "Hardcoded test response",
-        }
-        for i, f in enumerate(frames)
-    ]
 
-#     client = _get_client()
-#     model_name = model or GEMINI_MODEL
+    client = _get_client()
+    model_name = model or GEMINI_MODEL
 
-#     all_results: List[dict] = []
+    all_results: List[dict] = []
 
-#     for batch in _chunked(frames, batch_size):
-#         contents = _build_contents(batch)
+    for batch in _chunked(frames, batch_size):
+        contents = _build_contents(batch)
 
-#         response = client.models.generate_content(
-#             model=model_name,
-#             contents=contents,
-#             config=types.GenerateContentConfig(
-#                 system_instruction=SYSTEM_INSTRUCTION,
-#                 response_mime_type="application/json",
-#                 temperature=0.2,
-#             ),
-#         )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
 
-#         raw_text = (response.text or "").strip()
-#         try:
-#             parsed = json.loads(raw_text)
-#             results_by_index = {
-#                 r["frame_index"]: r for r in parsed.get("results", [])
-#             }
-#         except (json.JSONDecodeError, KeyError, TypeError) as e:
-#             # If Gemini ever returns malformed JSON, fail this batch
-#             # gracefully instead of crashing the whole pipeline — mark
-#             # these frames as needing manual review.
-#             results_by_index = {}
-#             for f in batch:
-#                 all_results.append({
-#                     **f,
-#                     "is_inaccessible": None,
-#                     "issue_type": "error",
-#                     "reason": f"Gemini response could not be parsed: {e}",
-#                 })
-#             continue
+        raw_text = (response.text or "").strip()
+        try:
+            parsed = json.loads(raw_text)
+            results_by_index = {
+                r["frame_index"]: r for r in parsed.get("results", [])
+            }
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # If Gemini ever returns malformed JSON, fail this batch
+            # gracefully instead of crashing the whole pipeline — mark
+            # these frames as needing manual review.
+            results_by_index = {}
+            for f in batch:
+                all_results.append({
+                    **f,
+                    "is_inaccessible": None,
+                    "issue_type": "error",
+                    "reason": f"Gemini response could not be parsed: {e}",
+                })
+            continue
 
-#         for f in batch:
-#             verdict = results_by_index.get(f["frame_index"])
-#             if verdict is None:
-#                 all_results.append({
-#                     **f,
-#                     "is_inaccessible": None,
-#                     "issue_type": "error",
-#                     "reason": "Gemini did not return a result for this frame_index",
-#                 })
-#             else:
-#                 all_results.append({
-#                     **f,
-#                     "is_inaccessible": verdict.get("is_inaccessible"),
-#                     "issue_type": verdict.get("issue_type"),
-#                     "reason": verdict.get("reason"),
-#                 })
+        for f in batch:
+            verdict = results_by_index.get(f["frame_index"])
+            if verdict is None:
+                all_results.append({
+                    **f,
+                    "is_inaccessible": None,
+                    "issue_type": "error",
+                    "reason": "Gemini did not return a result for this frame_index",
+                })
+            else:
+                all_results.append({
+                    **f,
+                    "is_inaccessible": verdict.get("is_inaccessible"),
+                    "issue_type": verdict.get("issue_type"),
+                    "reason": verdict.get("reason"),
+                })
 
-#     return all_results
+    return all_results
