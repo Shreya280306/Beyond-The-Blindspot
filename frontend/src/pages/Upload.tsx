@@ -1,80 +1,59 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  UploadCloud, FileVideo, CheckCircle2, Loader2, ArrowRight, X, Film,
+  UploadCloud, FileVideo, CheckCircle2, Loader2, ArrowRight, X, Link2, AlertTriangle,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { processingSteps, sampleVideo } from "@/lib/mock";
+import { useJob, type PipelinePhase } from "@/context/JobContext";
 import { cn } from "@/lib/cn";
 
-type Phase = "idle" | "uploading" | "processing" | "done";
+const stepsForPhase: { key: PipelinePhase; label: string; detail: string }[] = [
+  { key: "uploading", label: "Uploading video", detail: "Sending the file to the pipeline — this becomes your job_id" },
+  { key: "analyzing", label: "Analyzing (steps 2–6)", detail: "Chunking · frames · transcript (Whisper) · frame diffing · vision analysis" },
+  { key: "generating", label: "Generating accessible video (steps 7–9)", detail: "Audio descriptions · text-to-speech · building the final .mp4" },
+];
+
+const order: PipelinePhase[] = ["uploading", "analyzing", "generating", "done"];
 
 export default function Upload() {
   const nav = useNavigate();
-  const [phase, setPhase] = useState<Phase>("idle");
+  const job = useJob();
   const [drag, setDrag] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [stepIdx, setStepIdx] = useState(0);
+  const [mode, setMode] = useState<"file" | "youtube">("file");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const start = useCallback(() => {
-    setPhase("uploading");
-    setProgress(0);
-  }, []);
+  const handleFile = useCallback(
+    (file: File | undefined) => {
+      if (!file) return;
+      void job.startFromFile(file);
+    },
+    [job],
+  );
 
-  // upload progress
-  useEffect(() => {
-    if (phase !== "uploading") return;
-    const id = setInterval(() => {
-      setProgress((p) => {
-        if (p >= 100) {
-          clearInterval(id);
-          setPhase("processing");
-          return 100;
-        }
-        return p + 4;
-      });
-    }, 60);
-    return () => clearInterval(id);
-  }, [phase]);
+  const handleYoutubeSubmit = useCallback(() => {
+    if (!youtubeUrl.trim()) return;
+    void job.startFromYoutube(youtubeUrl.trim());
+  }, [job, youtubeUrl]);
 
-  // processing steps
-  useEffect(() => {
-    if (phase !== "processing") return;
-    setStepIdx(0);
-    const id = setInterval(() => {
-      setStepIdx((s) => {
-        if (s >= processingSteps.length - 1) {
-          clearInterval(id);
-          setTimeout(() => setPhase("done"), 700);
-          return s;
-        }
-        return s + 1;
-      });
-    }, 850);
-    return () => clearInterval(id);
-  }, [phase]);
-
-  const reset = () => {
-    setPhase("idle");
-    setProgress(0);
-    setStepIdx(0);
-  };
+  const phase = job.phase;
+  const isBusy = phase === "uploading" || phase === "analyzing" || phase === "generating";
+  const currentStepIdx = order.indexOf(phase);
 
   return (
     <AppShell>
       <PageHeader
         eyebrow="Step 1 · Upload"
         title="Upload a lecture"
-        sub="Drop a video and EduAccess AI runs the full accessibility pipeline. For the demo, any file (or the sample) works."
+        sub="Drop a video file or paste a YouTube link. EduAccess AI runs the real blind-agent pipeline against your FastAPI backend — the same job_id is reused automatically for every step."
         action={
           phase !== "idle" ? (
-            <Button variant="ghost" onClick={reset}>
+            <Button variant="ghost" onClick={job.reset}>
               <X className="h-4 w-4" /> Reset
             </Button>
           ) : undefined
@@ -92,48 +71,89 @@ export default function Upload() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -12 }}
               >
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-                  onDragLeave={() => setDrag(false)}
-                  onDrop={(e) => { e.preventDefault(); setDrag(false); start(); }}
-                  onClick={() => inputRef.current?.click()}
-                  className={cn(
-                    "group relative grid cursor-pointer place-items-center rounded-2xl border-2 border-dashed p-14 text-center transition-all",
-                    drag
-                      ? "border-accent-400 bg-accent-500/5 scale-[1.01]"
-                      : "border-white/10 bg-ink-850/50 hover:border-accent-500/40 hover:bg-ink-800/50",
-                  )}
-                >
-                  <input
-                    ref={inputRef}
-                    type="file"
-                    accept="video/*"
-                    className="hidden"
-                    onChange={() => start()}
-                  />
-                  <div className="relative mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-ink-800 ring-hair">
-                    <span className="absolute inset-0 rounded-2xl bg-accent-500/10 blur-md transition-opacity group-hover:opacity-100" />
-                    <UploadCloud className="relative h-7 w-7 text-accent-400" />
-                  </div>
-                  <p className="text-lg font-semibold text-mist-100">
-                    Drag & drop your video here
-                  </p>
-                  <p className="mt-1 text-sm text-mist-500">
-                    or <span className="text-accent-400">browse files</span> · MP4, MOV, WEBM up to 2GB
-                  </p>
-                  <div className="mt-6">
-                    <Button
-                      variant="outline"
-                      onClick={(e) => { e.stopPropagation(); start(); }}
-                    >
-                      <Film className="h-4 w-4" /> Use sample lecture
-                    </Button>
-                  </div>
+                {/* mode switch */}
+                <div className="mb-4 inline-flex rounded-xl bg-ink-800/60 p-1 ring-hair">
+                  <button
+                    onClick={() => setMode("file")}
+                    className={cn(
+                      "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
+                      mode === "file" ? "bg-accent-500 text-ink-950" : "text-mist-400 hover:text-mist-200",
+                    )}
+                  >
+                    Upload file
+                  </button>
+                  <button
+                    onClick={() => setMode("youtube")}
+                    className={cn(
+                      "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
+                      mode === "youtube" ? "bg-accent-500 text-ink-950" : "text-mist-400 hover:text-mist-200",
+                    )}
+                  >
+                    YouTube link
+                  </button>
                 </div>
+
+                {mode === "file" ? (
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+                    onDragLeave={() => setDrag(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDrag(false);
+                      handleFile(e.dataTransfer.files?.[0]);
+                    }}
+                    onClick={() => inputRef.current?.click()}
+                    className={cn(
+                      "group relative grid cursor-pointer place-items-center rounded-2xl border-2 border-dashed p-14 text-center transition-all",
+                      drag
+                        ? "border-accent-400 bg-accent-500/5 scale-[1.01]"
+                        : "border-white/10 bg-ink-850/50 hover:border-accent-500/40 hover:bg-ink-800/50",
+                    )}
+                  >
+                    <input
+                      ref={inputRef}
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => handleFile(e.target.files?.[0])}
+                    />
+                    <div className="relative mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-ink-800 ring-hair">
+                      <span className="absolute inset-0 rounded-2xl bg-accent-500/10 blur-md transition-opacity group-hover:opacity-100" />
+                      <UploadCloud className="relative h-7 w-7 text-accent-400" />
+                    </div>
+                    <p className="text-lg font-semibold text-mist-100">
+                      Drag & drop your video here
+                    </p>
+                    <p className="mt-1 text-sm text-mist-500">
+                      or <span className="text-accent-400">browse files</span> · MP4, MOV, WEBM
+                    </p>
+                  </div>
+                ) : (
+                  <GlassCard className="p-8">
+                    <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-ink-800 ring-hair">
+                      <Link2 className="h-6 w-6 text-accent-400" />
+                    </div>
+                    <p className="text-lg font-semibold text-mist-100">Paste a YouTube URL</p>
+                    <p className="mt-1 text-sm text-mist-500">The backend downloads it with yt-dlp (up to 720p) before processing.</p>
+                    <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                      <input
+                        type="url"
+                        value={youtubeUrl}
+                        onChange={(e) => setYoutubeUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleYoutubeSubmit()}
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        className="flex-1 rounded-xl bg-ink-900/60 px-4 py-2.5 text-sm text-mist-100 ring-hair outline-none placeholder:text-mist-600 focus:ring-accent-500/40"
+                      />
+                      <Button variant="primary" onClick={handleYoutubeSubmit} disabled={!youtubeUrl.trim()}>
+                        Run pipeline <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </GlassCard>
+                )}
               </motion.div>
             )}
 
-            {(phase === "uploading" || phase === "processing" || phase === "done") && (
+            {(isBusy || phase === "done" || phase === "error") && (
               <motion.div
                 key="status"
                 initial={{ opacity: 0, y: 12 }}
@@ -147,45 +167,37 @@ export default function Upload() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-mist-100">
-                        {sampleVideo.title}.mp4
+                        {job.videoFileName ?? "video"}
                       </p>
-                      <p className="text-xs text-mist-500">
-                        {sampleVideo.size} · {sampleVideo.resolution} · {sampleVideo.duration}
-                      </p>
+                      {job.jobId && (
+                        <p className="truncate font-mono text-xs text-mist-500">job_id: {job.jobId}</p>
+                      )}
                     </div>
                     {phase === "done" ? (
                       <Badge tone="accent"><CheckCircle2 className="h-3.5 w-3.5" /> Ready</Badge>
+                    ) : phase === "error" ? (
+                      <Badge tone="amber"><AlertTriangle className="h-3.5 w-3.5" /> Failed</Badge>
                     ) : (
                       <Badge tone="neutral">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        {phase === "uploading" ? "Uploading" : "Processing"}
+                        Working
                       </Badge>
                     )}
                   </div>
 
-                  {/* upload progress */}
-                  {phase === "uploading" && (
-                    <div className="mt-6">
-                      <div className="mb-2 flex justify-between text-xs text-mist-500">
-                        <span>Uploading to pipeline…</span>
-                        <span className="font-mono text-accent-400">{progress}%</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-ink-700">
-                        <motion.div
-                          className="h-full rounded-full bg-gradient-to-r from-accent-600 to-accent-400"
-                          animate={{ width: `${progress}%` }}
-                          transition={{ ease: "linear" }}
-                        />
-                      </div>
+                  {phase === "error" && (
+                    <div className="mt-5 rounded-xl bg-amber-500/5 p-4 text-sm text-amber-200 ring-1 ring-inset ring-amber-500/20">
+                      {job.error}
                     </div>
                   )}
 
                   {/* processing steps */}
-                  {(phase === "processing" || phase === "done") && (
+                  {(isBusy || phase === "done") && (
                     <div className="mt-6 space-y-2">
-                      {processingSteps.map((s, i) => {
-                        const active = i === stepIdx && phase === "processing";
-                        const complete = phase === "done" || i < stepIdx;
+                      {stepsForPhase.map((s) => {
+                        const sIdx = order.indexOf(s.key);
+                        const active = s.key === phase;
+                        const complete = phase === "done" || sIdx < currentStepIdx;
                         return (
                           <div
                             key={s.key}
@@ -232,44 +244,42 @@ export default function Upload() {
                       </Button>
                     </motion.div>
                   )}
+
+                  {phase === "error" && (
+                    <div className="mt-6">
+                      <Button variant="outline" onClick={job.reset}>Try again</Button>
+                    </div>
+                  )}
                 </GlassCard>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Right: preview + tips */}
+        {/* Right: tips */}
         <div className="space-y-6 lg:col-span-2">
-          <GlassCard className="overflow-hidden">
-            <div
-              className="relative grid aspect-video place-items-center"
-              style={{ background: sampleVideo.thumbnail }}
-            >
-              <div className="absolute inset-0 bg-dots opacity-30" />
-              <div className="relative grid h-14 w-14 place-items-center rounded-full glass ring-hair">
-                <span className="absolute inset-0 animate-pulse-ring rounded-full ring-2 ring-accent-400/40" />
-                <FileVideo className="h-6 w-6 text-accent-300" />
-              </div>
-              <span className="absolute bottom-3 right-3 rounded-md bg-ink-950/70 px-2 py-1 font-mono text-xs text-mist-300">
-                {sampleVideo.duration}
-              </span>
-            </div>
-            <div className="p-4">
-              <p className="text-sm font-semibold text-mist-100">{sampleVideo.title}</p>
-              <p className="mt-0.5 text-xs text-mist-500">{sampleVideo.course}</p>
-            </div>
-          </GlassCard>
-
           <GlassCard className="p-5">
             <p className="text-sm font-semibold text-mist-100">What happens next</p>
             <ul className="mt-3 space-y-2.5 text-sm text-mist-500">
-              {["Audio is transcribed & understood", "Frames scanned for visuals", "Accessibility needs detected", "4 agents generate tailored output"].map((t) => (
+              {[
+                "Upload returns a job_id, reused for every step",
+                "Pipeline run: transcribe, detect frame changes, vision analysis",
+                "Blind agent: describe → text-to-speech → build accessible .mp4",
+                "Download the final accessible video",
+              ].map((t) => (
                 <li key={t} className="flex items-start gap-2.5">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-accent-500/70" />
                   {t}
                 </li>
               ))}
             </ul>
+          </GlassCard>
+
+          <GlassCard className="p-5">
+            <p className="text-sm font-semibold text-mist-100">Backend required</p>
+            <p className="mt-2 text-sm leading-relaxed text-mist-500">
+              Start it first: <code className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-xs text-accent-300">uvicorn app.main:app --reload --port 8000</code>
+            </p>
           </GlassCard>
         </div>
       </div>
