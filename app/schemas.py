@@ -102,6 +102,9 @@ class FullPipelineResponse(BaseModel):
     num_frames_extracted: int
     num_changed_frames_sent_to_gemini: int
     num_transcript_segments: int
+    transcript: List[TranscriptSegment] = []
+    language: Optional[str] = None
+    language_probability: Optional[float] = None
     accessibility_issues: List[AccessibilityIssue]
 
 

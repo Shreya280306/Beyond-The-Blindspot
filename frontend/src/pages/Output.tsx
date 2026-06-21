@@ -2,17 +2,20 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Eye, Ear, Type, Zap, Volume2, Captions, BookOpen, ListChecks,
-  ArrowRight, CheckCircle2, Circle, Sparkles,
+  ArrowRight, CheckCircle2, Circle, Sparkles, Download, Film, AlertTriangle, Loader2,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import {
   blindOutput, deafOutput, dyslexiaOutput, adhdOutput,
 } from "@/lib/mock";
 import type { AgentKey } from "@/lib/mock";
 import { cn } from "@/lib/cn";
+import { downloadUrl, downloadAccessibleVideo } from "@/lib/api";
+import { loadAccessibleVideo } from "@/lib/store";
 
 const tabs: { key: AgentKey; label: string; icon: typeof Eye; tone: "accent" | "cyan" | "violet" | "amber"; desc: string }[] = [
   { key: "blind", label: "Blind Mode", icon: Eye, tone: "accent", desc: "Visuals turned into rich descriptions" },
@@ -101,45 +104,105 @@ export default function Output() {
 
 /* ───────── Blind ───────── */
 function BlindPanel() {
+  const accessibleVideo = loadAccessibleVideo();
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    if (!accessibleVideo) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadAccessibleVideo(accessibleVideo.job_id);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Download failed. Is the backend still running?");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="space-y-4 lg:col-span-2">
-        {blindOutput.altDescriptions.map((d, i) => (
-          <motion.div
-            key={d.at}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-          >
-            <GlassCard className="p-5">
-              <div className="flex items-center justify-between">
-                <Badge tone="accent"><Eye className="h-3.5 w-3.5" /> {d.title}</Badge>
-                <span className="font-mono text-xs text-mist-600">{d.at}</span>
-              </div>
-              <p className="mt-3 text-[15px] leading-relaxed text-mist-200">{d.body}</p>
-              <button className="mt-4 inline-flex items-center gap-2 rounded-lg bg-ink-800 px-3 py-1.5 text-xs font-medium text-mist-300 ring-hair transition-colors hover:text-accent-300">
-                <Volume2 className="h-3.5 w-3.5" /> Play audio description
-              </button>
-            </GlassCard>
-          </motion.div>
-        ))}
-      </div>
-      <GlassCard className="h-fit p-5">
-        <Volume2 className="h-5 w-5 text-accent-400" />
-        <p className="mt-3 text-sm font-semibold text-mist-100">Sonification</p>
-        <p className="mt-1 text-sm leading-relaxed text-mist-500">{blindOutput.sonification}</p>
-        <div className="mt-4 flex items-end gap-1">
-          {[3, 5, 8, 6, 10, 9, 13, 12, 16, 15, 19].map((h, i) => (
-            <motion.span
-              key={i}
-              className="w-2 rounded-full bg-accent-500/60"
-              initial={{ height: 4 }}
-              animate={{ height: h * 3 }}
-              transition={{ delay: i * 0.05, duration: 0.4 }}
-            />
+    <div className="space-y-6">
+      {/* Real accessible video, once a video has actually been uploaded & processed */}
+      {accessibleVideo && (
+        <GlassCard className="p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Film className="h-4 w-4 text-accent-400" />
+              <p className="text-sm font-semibold text-mist-100">Final accessible video</p>
+            </div>
+            <Button variant="primary" onClick={handleDownload} disabled={downloading}>
+              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {downloading ? "Preparing…" : "Download .mp4"}
+            </Button>
+          </div>
+          {downloadError && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg bg-amber-500/5 p-3 text-xs text-amber-200 ring-1 ring-inset ring-amber-500/20">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {downloadError}
+            </div>
+          )}
+          <video
+            className="mt-4 w-full rounded-xl bg-ink-950 ring-hair"
+            src={downloadUrl(accessibleVideo.job_id)}
+            controls
+            preload="metadata"
+          />
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-ink-900/60 p-3 ring-hair">
+              <p className="text-lg font-bold text-mist-100">{accessibleVideo.num_issues_described}</p>
+              <p className="text-xs text-mist-500">Descriptions generated</p>
+            </div>
+            <div className="rounded-xl bg-ink-900/60 p-3 ring-hair">
+              <p className="text-lg font-bold text-mist-100">{accessibleVideo.num_audio_clips_generated}</p>
+              <p className="text-xs text-mist-500">Audio clips</p>
+            </div>
+            <div className="rounded-xl bg-ink-900/60 p-3 ring-hair">
+              <p className="text-lg font-bold text-mist-100">{accessibleVideo.total_pause_duration_seconds.toFixed(1)}s</p>
+              <p className="text-xs text-mist-500">Pause time added</p>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          {blindOutput.altDescriptions.map((d, i) => (
+            <motion.div
+              key={d.at}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.08 }}
+            >
+              <GlassCard className="p-5">
+                <div className="flex items-center justify-between">
+                  <Badge tone="accent"><Eye className="h-3.5 w-3.5" /> {d.title}</Badge>
+                  <span className="font-mono text-xs text-mist-600">{d.at}</span>
+                </div>
+                <p className="mt-3 text-[15px] leading-relaxed text-mist-200">{d.body}</p>
+                <button className="mt-4 inline-flex items-center gap-2 rounded-lg bg-ink-800 px-3 py-1.5 text-xs font-medium text-mist-300 ring-hair transition-colors hover:text-accent-300">
+                  <Volume2 className="h-3.5 w-3.5" /> Play audio description
+                </button>
+              </GlassCard>
+            </motion.div>
           ))}
         </div>
-      </GlassCard>
+        <GlassCard className="h-fit p-5">
+          <Volume2 className="h-5 w-5 text-accent-400" />
+          <p className="mt-3 text-sm font-semibold text-mist-100">Sonification</p>
+          <p className="mt-1 text-sm leading-relaxed text-mist-500">{blindOutput.sonification}</p>
+          <div className="mt-4 flex items-end gap-1">
+            {[3, 5, 8, 6, 10, 9, 13, 12, 16, 15, 19].map((h, i) => (
+              <motion.span
+                key={i}
+                className="w-2 rounded-full bg-accent-500/60"
+                initial={{ height: 4 }}
+                animate={{ height: h * 3 }}
+                transition={{ delay: i * 0.05, duration: 0.4 }}
+              />
+            ))}
+          </div>
+        </GlassCard>
+      </div>
     </div>
   );
 }

@@ -72,11 +72,15 @@ async def run_full_pipeline(
 
     # Step 4: transcribe
     try:
-        transcript = transcription.transcribe_audio(audio_result["audio_path"])
+        transcript, language, language_probability = transcription.transcribe_audio(audio_result["audio_path"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Step 4 (transcription) failed: {e}")
     job_store.mark_step_complete(
-        job_id, "transcribe", transcript=transcript, num_transcript_segments=len(transcript)
+        job_id, "transcribe",
+        transcript=transcript,
+        num_transcript_segments=len(transcript),
+        language=language,
+        language_probability=language_probability,
     )
 
     # Step 5: detect changed frames
@@ -135,6 +139,9 @@ async def run_full_pipeline(
         num_frames_extracted=len(frames),
         num_changed_frames_sent_to_gemini=len(changed_frames),
         num_transcript_segments=len(transcript),
+        transcript=transcript,
+        language=language,
+        language_probability=language_probability,
         accessibility_issues=issues,
     )
 

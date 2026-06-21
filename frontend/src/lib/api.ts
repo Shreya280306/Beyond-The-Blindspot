@@ -1,34 +1,9 @@
-<<<<<<< HEAD
-/**
- * Thin client for the "Beyond The Blindspot" FastAPI backend
- * (see app/main.py / app/routers/*.py).
- *
- * Only wires the endpoints needed for the blind-agent flow:
- *   1. upload (file or YouTube link)               -> job_id
- *   2-6. pipeline/run/{job_id}                      -> accessibility_issues
- *   7-9. make-accessible/{job_id}                   -> output_video_path
- *   download/{job_id}                                -> final .mp4
- *   status/{job_id}                                  -> progress polling
- *
- * job_id is returned by upload and then threaded through every other
- * call automatically by the caller (see JobContext) — you never need
- * to type it in twice.
- */
-
-export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
-
-const API = `${API_BASE_URL}/api/v1`;
-
-// ── Shared types (mirrors app/schemas.py) ────────────────────────────────
-=======
 /* Real backend client for the Accessible Video Analyzer FastAPI service.
    Base URL comes from VITE_API_URL (set in .env), defaults to local dev. */
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ||
   "http://localhost:8000";
->>>>>>> 9627663cb366b4d4e593c13b2cb6071636fb0bed
 
 export interface UploadResponse {
   job_id: string;
@@ -47,22 +22,27 @@ export interface AccessibilityIssue {
   change_score: number | null;
 }
 
-<<<<<<< HEAD
-export interface FullPipelineResponse {
-=======
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface PipelineResult {
->>>>>>> 9627663cb366b4d4e593c13b2cb6071636fb0bed
   job_id: string;
   duration_seconds: number | null;
   num_chunks: number;
   num_frames_extracted: number;
   num_changed_frames_sent_to_gemini: number;
   num_transcript_segments: number;
+  transcript: TranscriptSegment[];
+  language: string | null;
+  language_probability: number | null;
   accessibility_issues: AccessibilityIssue[];
 }
 
-<<<<<<< HEAD
-export interface FullAccessiblePipelineResponse {
+/** Response from POST /make-accessible/{job_id} (steps 7+8+9: describe -> TTS -> build video). */
+export interface AccessibleVideoResult {
   job_id: string;
   num_issues_described: number;
   num_audio_clips_generated: number;
@@ -71,33 +51,6 @@ export interface FullAccessiblePipelineResponse {
   total_pause_duration_seconds: number;
 }
 
-export interface JobStatusResponse {
-  job_id: string;
-  status: string;
-  steps_completed: string[];
-  detail: Record<string, unknown>;
-}
-
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-    this.name = "ApiError";
-  }
-}
-
-async function unwrap<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      // body wasn't JSON; fall back to statusText
-    }
-    throw new ApiError(res.status, detail);
-=======
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
@@ -108,79 +61,10 @@ async function asJson<T>(res: Response): Promise<T> {
       /* ignore non-JSON error bodies */
     }
     throw new Error(detail);
->>>>>>> 9627663cb366b4d4e593c13b2cb6071636fb0bed
   }
   return res.json() as Promise<T>;
 }
 
-<<<<<<< HEAD
-// ── Step 1: upload ────────────────────────────────────────────────────────
-
-export async function uploadVideoFile(file: File): Promise<UploadResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(`${API}/upload/file`, { method: "POST", body: formData });
-  return unwrap<UploadResponse>(res);
-}
-
-export async function uploadFromYoutube(youtubeUrl: string): Promise<UploadResponse> {
-  const res = await fetch(`${API}/upload/youtube`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ youtube_url: youtubeUrl }),
-  });
-  return unwrap<UploadResponse>(res);
-}
-
-// ── Steps 2-6 in one call ────────────────────────────────────────────────
-
-export async function runPipeline(jobId: string): Promise<FullPipelineResponse> {
-  const res = await fetch(`${API}/pipeline/run/${jobId}`, { method: "POST" });
-  return unwrap<FullPipelineResponse>(res);
-}
-
-// ── Steps 7-9 in one call: describe -> TTS -> build accessible video ────
-
-export async function makeAccessible(jobId: string): Promise<FullAccessiblePipelineResponse> {
-  const res = await fetch(`${API}/make-accessible/${jobId}`, { method: "POST" });
-  return unwrap<FullAccessiblePipelineResponse>(res);
-}
-
-// ── Status polling ───────────────────────────────────────────────────────
-
-export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-  const res = await fetch(`${API}/status/${jobId}`);
-  return unwrap<JobStatusResponse>(res);
-}
-
-// ── Final video ───────────────────────────────────────────────────────────
-
-/** Direct download URL for the final accessible .mp4 (GET /download/{job_id}). */
-export function downloadUrl(jobId: string): string {
-  return `${API}/download/${jobId}`;
-}
-
-/** A URL under /storage that can be used to preview an extracted frame image. */
-export function storageUrl(relativePath: string): string {
-  // frame_path / output_video_path etc. come back as paths like
-  // "app/storage/jobs/{job_id}/frames/frame_000007.jpg" — strip the
-  // leading "app/" since /storage is mounted at app/storage.
-  const cleaned = relativePath.replace(/^app\/storage\//, "");
-  return `${API_BASE_URL}/storage/${cleaned}`;
-}
-
-/**
- * Runs the full blind-agent pipeline end to end for a freshly uploaded job:
- * pipeline/run (steps 2-6) then make-accessible (steps 7-9).
- * Reuses the same job_id throughout — call this right after upload.
- */
-export async function runBlindAgentPipeline(
-  jobId: string,
-): Promise<{ pipeline: FullPipelineResponse; accessible: FullAccessiblePipelineResponse }> {
-  const pipeline = await runPipeline(jobId);
-  const accessible = await makeAccessible(jobId);
-  return { pipeline, accessible };
-=======
 /** Step 1: upload a video file, get a job_id back. */
 export async function uploadVideo(file: File): Promise<UploadResponse> {
   const form = new FormData();
@@ -192,12 +76,60 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
   return asJson<UploadResponse>(res);
 }
 
-/** Steps 2-6: run the whole pipeline for an uploaded job. Can take a while. */
+/** Steps 2-6: run the whole analysis pipeline for an uploaded job. Can take a while. */
 export async function runPipeline(jobId: string): Promise<PipelineResult> {
   const res = await fetch(`${API_URL}/api/v1/pipeline/run/${jobId}`, {
     method: "POST",
   });
   return asJson<PipelineResult>(res);
+}
+
+/**
+ * Steps 7-9 in one call: describe each flagged frame -> text-to-speech ->
+ * build the final accessible .mp4 (pause-and-describe edits inserted).
+ * Requires steps 1-6 (runPipeline) to have completed for this job_id first.
+ * This can take a while — FFmpeg re-encodes the full video.
+ */
+export async function makeAccessible(jobId: string): Promise<AccessibleVideoResult> {
+  const res = await fetch(`${API_URL}/api/v1/make-accessible/${jobId}`, {
+    method: "POST",
+  });
+  return asJson<AccessibleVideoResult>(res);
+}
+
+/** Direct (streamable) URL for the final accessible .mp4 — use for <video src> or a download link. */
+export function downloadUrl(jobId: string): string {
+  return `${API_URL}/api/v1/download/${jobId}`;
+}
+
+/**
+ * Triggers an actual save-to-disk download of the final .mp4.
+ * Fetches the file as a blob first rather than relying on an <a download>
+ * pointed at a different origin (frontend dev server vs backend), since
+ * browsers often ignore the `download` attribute cross-origin and just
+ * navigate to the file instead of saving it.
+ */
+export async function downloadAccessibleVideo(jobId: string): Promise<void> {
+  const res = await fetch(downloadUrl(jobId));
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = `accessible_${jobId.slice(0, 8)}.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 /** Turn a backend frame_path (e.g. "app/storage/jobs/x/frames/f.jpg")
@@ -207,5 +139,49 @@ export function frameUrl(framePath: string): string {
   const idx = norm.indexOf("storage/");
   const rel = idx >= 0 ? norm.slice(idx + "storage/".length) : norm;
   return `${API_URL}/storage/${rel}`;
->>>>>>> 9627663cb366b4d4e593c13b2cb6071636fb0bed
+}
+
+/** Formats seconds as m:ss for timestamps next to transcript lines / frames. */
+export function fmtTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English", es: "Spanish", fr: "French", de: "German", hi: "Hindi",
+  zh: "Chinese", ja: "Japanese", ko: "Korean", pt: "Portuguese", ru: "Russian",
+  ar: "Arabic", it: "Italian", nl: "Dutch", tr: "Turkish", pl: "Polish",
+  ta: "Tamil", te: "Telugu", mr: "Marathi", bn: "Bengali", ur: "Urdu",
+};
+
+export function languageLabel(code: string | null): string | null {
+  if (!code) return null;
+  return LANGUAGE_NAMES[code] ?? code.toUpperCase();
+}
+
+export interface TranscriptStats {
+  wordCount: number;
+  durationSeconds: number;
+  wordsPerMinute: number | null;
+  segmentCount: number;
+}
+
+/**
+ * Derives only what's honestly computable from the real transcript —
+ * no fabricated topic/keyword/formula extraction, since the backend
+ * doesn't run any NLP step beyond Whisper transcription.
+ */
+export function transcriptStats(transcript: TranscriptSegment[], durationSeconds: number | null): TranscriptStats {
+  const wordCount = transcript.reduce((sum, seg) => sum + seg.text.split(/\s+/).filter(Boolean).length, 0);
+  const spokenSeconds = transcript.length
+    ? transcript[transcript.length - 1].end - transcript[0].start
+    : (durationSeconds ?? 0);
+  const wordsPerMinute = spokenSeconds > 0 ? Math.round((wordCount / spokenSeconds) * 60) : null;
+  return {
+    wordCount,
+    durationSeconds: durationSeconds ?? spokenSeconds,
+    wordsPerMinute,
+    segmentCount: transcript.length,
+  };
 }

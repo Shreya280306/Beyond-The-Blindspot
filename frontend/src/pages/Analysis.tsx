@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Hash, Sigma, Lightbulb, BarChart3, Workflow, Variable,
-  PlayCircle, Eye, Ear, Type, Zap, ArrowRight, FileText, ScanLine, AlertTriangle,
+  Hash, BarChart3, Workflow, Variable,
+  PlayCircle, Eye, Ear, Type, Zap, ArrowRight, FileText, ScanLine, AlertTriangle, Clock, Mic,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
@@ -14,15 +14,9 @@ import {
   transcriptChunks, sampleVideo,
 } from "@/lib/mock";
 import type { VisualType } from "@/lib/mock";
-import { frameUrl } from "@/lib/api";
+import { frameUrl, fmtTime, transcriptStats, languageLabel } from "@/lib/api";
 import { loadResult } from "@/lib/store";
 import { cn } from "@/lib/cn";
-
-function fmtTime(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 const visualIcon: Record<VisualType, typeof BarChart3> = {
   graph: BarChart3,
@@ -43,6 +37,9 @@ export default function Analysis() {
   const result = loadResult();
   const live = !!result;
   const issues = result?.accessibility_issues ?? [];
+  const transcript = result?.transcript ?? [];
+  const stats = live ? transcriptStats(transcript, result!.duration_seconds) : null;
+  const lang = live ? languageLabel(result!.language) : null;
 
   return (
     <AppShell>
@@ -64,7 +61,11 @@ export default function Analysis() {
         </div>
         <div className="mr-auto">
           <p className="text-sm font-semibold text-mist-100">{sampleVideo.title}</p>
-          <p className="text-xs text-mist-500">{sampleVideo.course} · {sampleVideo.duration}</p>
+          <p className="text-xs text-mist-500">
+            {live
+              ? (result!.duration_seconds != null ? `${fmtTime(result!.duration_seconds)} long` : "Your upload")
+              : `${sampleVideo.course} · ${sampleVideo.duration}`}
+          </p>
         </div>
         {live ? (
           <Badge tone="accent"><ScanLine className="h-3.5 w-3.5" /> Live analysis</Badge>
@@ -73,7 +74,11 @@ export default function Analysis() {
             <ScanLine className="h-3.5 w-3.5" /> {Math.round(transcriptInsights.confidence * 100)}% confidence
           </Badge>
         )}
-        <Badge tone="neutral">{transcriptInsights.readingLevel} reading level</Badge>
+        {live ? (
+          lang && <Badge tone="neutral">{lang} detected</Badge>
+        ) : (
+          <Badge tone="neutral">{transcriptInsights.readingLevel} reading level</Badge>
+        )}
       </MotionCard>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
@@ -85,57 +90,111 @@ export default function Analysis() {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-mist-300">Transcript understanding</h2>
             </div>
 
-            <div className="rounded-xl bg-ink-900/60 p-4 ring-hair">
-              <p className="text-xs uppercase tracking-wide text-mist-600">Detected topic</p>
-              <p className="mt-1 text-xl font-bold text-gradient-accent">{transcriptInsights.topic}</p>
-            </div>
-
-            {/* keywords */}
-            <div className="mt-5">
-              <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-mist-600">
-                <Hash className="h-3.5 w-3.5" /> Keywords
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {transcriptInsights.keywords.map((k, i) => (
-                  <motion.span
-                    key={k}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    whileInView={{ opacity: 1, scale: 1 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: i * 0.04 }}
-                    className="rounded-lg bg-ink-800 px-2.5 py-1 text-xs font-medium text-mist-300 ring-hair"
-                  >
-                    {k}
-                  </motion.span>
-                ))}
-              </div>
-            </div>
-
-            {/* formulas */}
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              {transcriptInsights.formulas.map((f) => (
-                <div key={f.latex} className="rounded-xl bg-ink-900/60 p-4 ring-hair">
-                  <Sigma className="h-4 w-4 text-accent-400" />
-                  <p className="mt-2 font-mono text-lg text-mist-100">{f.latex}</p>
-                  <p className="mt-1 text-xs text-mist-500">{f.label}</p>
+            {live ? (
+              transcript.length === 0 ? (
+                <div className="rounded-xl bg-ink-900/60 p-6 text-center text-sm text-mist-500 ring-hair">
+                  No speech was detected in this video.
                 </div>
-              ))}
-            </div>
+              ) : (
+                <>
+                  {/* real, honestly-derived stats — no fabricated topic/keyword extraction */}
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl bg-ink-900/60 p-4 ring-hair">
+                      <Clock className="h-4 w-4 text-accent-400" />
+                      <p className="mt-2 text-xl font-bold text-mist-100">{fmtTime(stats!.durationSeconds)}</p>
+                      <p className="mt-1 text-xs text-mist-500">spoken duration</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-900/60 p-4 ring-hair">
+                      <Hash className="h-4 w-4 text-accent-400" />
+                      <p className="mt-2 text-xl font-bold text-mist-100">{stats!.wordCount.toLocaleString()}</p>
+                      <p className="mt-1 text-xs text-mist-500">words transcribed</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-900/60 p-4 ring-hair">
+                      <Mic className="h-4 w-4 text-accent-400" />
+                      <p className="mt-2 text-xl font-bold text-mist-100">
+                        {stats!.wordsPerMinute ?? "—"}
+                      </p>
+                      <p className="mt-1 text-xs text-mist-500">words per minute</p>
+                    </div>
+                  </div>
 
-            {/* concepts */}
-            <div className="mt-5">
-              <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-mist-600">
-                <Lightbulb className="h-3.5 w-3.5" /> Key concepts
-              </div>
-              <ul className="grid gap-2 sm:grid-cols-2">
-                {transcriptInsights.concepts.map((c) => (
-                  <li key={c} className="flex items-start gap-2 rounded-lg bg-ink-800/50 p-2.5 text-sm text-mist-300 ring-hair">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-400" />
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            </div>
+                  {/* full real transcript */}
+                  <div className="mt-5">
+                    <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-mist-600">
+                      <FileText className="h-3.5 w-3.5" /> Full transcript ({stats!.segmentCount} segments)
+                    </div>
+                    <div className="max-h-96 space-y-3 overflow-y-auto rounded-xl bg-ink-900/40 p-4 ring-hair">
+                      {transcript.map((seg, i) => (
+                        <motion.div
+                          key={`${seg.start}-${i}`}
+                          initial={{ opacity: 0, y: 6 }}
+                          whileInView={{ opacity: 1, y: 0 }}
+                          viewport={{ once: true }}
+                          transition={{ delay: Math.min(i, 12) * 0.02 }}
+                          className="flex gap-3"
+                        >
+                          <span className="shrink-0 font-mono text-xs text-accent-400/80">{fmtTime(seg.start)}</span>
+                          <p className="text-sm leading-relaxed text-mist-300">{seg.text}</p>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )
+            ) : (
+              <>
+                <div className="rounded-xl bg-ink-900/60 p-4 ring-hair">
+                  <p className="text-xs uppercase tracking-wide text-mist-600">Detected topic</p>
+                  <p className="mt-1 text-xl font-bold text-gradient-accent">{transcriptInsights.topic}</p>
+                </div>
+
+                {/* keywords */}
+                <div className="mt-5">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-mist-600">
+                    <Hash className="h-3.5 w-3.5" /> Keywords
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {transcriptInsights.keywords.map((k, i) => (
+                      <motion.span
+                        key={k}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        whileInView={{ opacity: 1, scale: 1 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: i * 0.04 }}
+                        className="rounded-lg bg-ink-800 px-2.5 py-1 text-xs font-medium text-mist-300 ring-hair"
+                      >
+                        {k}
+                      </motion.span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* formulas */}
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {transcriptInsights.formulas.map((f) => (
+                    <div key={f.latex} className="rounded-xl bg-ink-900/60 p-4 ring-hair">
+                      <p className="mt-2 font-mono text-lg text-mist-100">{f.latex}</p>
+                      <p className="mt-1 text-xs text-mist-500">{f.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* concepts */}
+                <div className="mt-5">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-mist-600">
+                    Key concepts
+                  </div>
+                  <ul className="grid gap-2 sm:grid-cols-2">
+                    {transcriptInsights.concepts.map((c) => (
+                      <li key={c} className="flex items-start gap-2 rounded-lg bg-ink-800/50 p-2.5 text-sm text-mist-300 ring-hair">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-400" />
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
           </MotionCard>
 
           {/* visual analysis */}
@@ -282,17 +341,44 @@ export default function Analysis() {
             </div>
           </MotionCard>
 
-          {/* transcript preview */}
+          {/* transcript preview / job summary */}
           <MotionCard className="p-6" delay={0.15}>
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-mist-300">Transcript</h2>
-            <div className="space-y-3">
-              {transcriptChunks.map((c) => (
-                <div key={c.t} className="flex gap-3">
-                  <span className="shrink-0 font-mono text-xs text-accent-400/80">{c.t}</span>
-                  <p className="text-sm leading-relaxed text-mist-400">{c.text}</p>
-                </div>
-              ))}
-            </div>
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-mist-300">
+              {live ? "Speech summary" : "Transcript"}
+            </h2>
+            {live ? (
+              <ul className="space-y-2.5 text-sm">
+                <li className="flex items-center justify-between">
+                  <span className="text-mist-500">Language</span>
+                  <span className="font-mono text-mist-200">{lang ?? "—"}</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span className="text-mist-500">Segments</span>
+                  <span className="font-mono text-mist-200">{stats?.segmentCount ?? 0}</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span className="text-mist-500">Words</span>
+                  <span className="font-mono text-mist-200">{stats?.wordCount.toLocaleString() ?? 0}</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span className="text-mist-500">Pace</span>
+                  <span className="font-mono text-mist-200">{stats?.wordsPerMinute ? `${stats.wordsPerMinute} wpm` : "—"}</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span className="text-mist-500">Inaccessible frames</span>
+                  <span className="font-mono text-mist-200">{issues.length}</span>
+                </li>
+              </ul>
+            ) : (
+              <div className="space-y-3">
+                {transcriptChunks.map((c) => (
+                  <div key={c.t} className="flex gap-3">
+                    <span className="shrink-0 font-mono text-xs text-accent-400/80">{c.t}</span>
+                    <p className="text-sm leading-relaxed text-mist-400">{c.text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
             <Link to="/output" className="mt-5 block">
               <Button variant="outline" className="w-full">
                 Generate accessible outputs <ArrowRight className="h-4 w-4" />

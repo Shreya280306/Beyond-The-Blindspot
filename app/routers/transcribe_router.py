@@ -32,7 +32,7 @@ async def transcribe(job_id: str):
         )
 
     try:
-        transcript = transcription.transcribe_audio(audio_path)
+        transcript, language, language_probability = transcription.transcribe_audio(audio_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
 
@@ -40,6 +40,8 @@ async def transcribe(job_id: str):
         job_id, "transcribe",
         transcript=transcript,
         num_transcript_segments=len(transcript),
+        language=language,
+        language_probability=language_probability,
     )
 
     return TranscriptionResponse(

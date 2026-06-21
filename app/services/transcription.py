@@ -6,7 +6,7 @@ We lazy-load the model once per process (it's a few hundred MB and slow to
 load) and reuse it across requests/jobs.
 """
 from functools import lru_cache
-from typing import List
+from typing import List, Tuple, Optional
 
 from app.config import WHISPER_MODEL_SIZE, WHISPER_DEVICE
 
@@ -18,9 +18,16 @@ def _get_model():
     return WhisperModel(WHISPER_MODEL_SIZE, device=WHISPER_DEVICE, compute_type=compute_type)
 
 
-def transcribe_audio(audio_path: str) -> List[dict]:
+def transcribe_audio(audio_path: str) -> Tuple[List[dict], Optional[str], Optional[float]]:
+    """
+    Returns (transcript_segments, detected_language, language_probability).
+
+    detected_language / language_probability come straight from Whisper's
+    own language-ID pass (it already runs this internally before
+    transcribing) — no extra inference cost to expose them.
+    """
     model = _get_model()
-    segments, _info = model.transcribe(audio_path, vad_filter=True, word_timestamps=False)
+    segments, info = model.transcribe(audio_path, vad_filter=True, word_timestamps=False)
 
     transcript = []
     for seg in segments:
@@ -29,7 +36,10 @@ def transcribe_audio(audio_path: str) -> List[dict]:
             "end": round(seg.end, 3),
             "text": seg.text.strip(),
         })
-    return transcript
+
+    language = getattr(info, "language", None)
+    language_probability = getattr(info, "language_probability", None)
+    return transcript, language, language_probability
 
 
 def transcript_for_window(transcript: List[dict], start: float, end: float) -> str:
