@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Hash, Sigma, Lightbulb, BarChart3, Workflow, Variable,
-  PlayCircle, Eye, Ear, Type, Zap, ArrowRight, FileText, ScanLine,
+  PlayCircle, Eye, Ear, Type, Zap, ArrowRight, FileText, ScanLine, AlertTriangle,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
@@ -14,7 +14,15 @@ import {
   transcriptChunks, sampleVideo,
 } from "@/lib/mock";
 import type { VisualType } from "@/lib/mock";
+import { frameUrl } from "@/lib/api";
+import { loadResult } from "@/lib/store";
 import { cn } from "@/lib/cn";
+
+function fmtTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 const visualIcon: Record<VisualType, typeof BarChart3> = {
   graph: BarChart3,
@@ -32,6 +40,10 @@ const classifyMeta = [
 ] as const;
 
 export default function Analysis() {
+  const result = loadResult();
+  const live = !!result;
+  const issues = result?.accessibility_issues ?? [];
+
   return (
     <AppShell>
       <PageHeader
@@ -54,9 +66,13 @@ export default function Analysis() {
           <p className="text-sm font-semibold text-mist-100">{sampleVideo.title}</p>
           <p className="text-xs text-mist-500">{sampleVideo.course} · {sampleVideo.duration}</p>
         </div>
-        <Badge tone="accent">
-          <ScanLine className="h-3.5 w-3.5" /> {Math.round(transcriptInsights.confidence * 100)}% confidence
-        </Badge>
+        {live ? (
+          <Badge tone="accent"><ScanLine className="h-3.5 w-3.5" /> Live analysis</Badge>
+        ) : (
+          <Badge tone="accent">
+            <ScanLine className="h-3.5 w-3.5" /> {Math.round(transcriptInsights.confidence * 100)}% confidence
+          </Badge>
+        )}
         <Badge tone="neutral">{transcriptInsights.readingLevel} reading level</Badge>
       </MotionCard>
 
@@ -127,8 +143,68 @@ export default function Analysis() {
             <div className="mb-5 flex items-center gap-2">
               <ScanLine className="h-4 w-4 text-accent-400" />
               <h2 className="text-sm font-semibold uppercase tracking-wide text-mist-300">Vision analysis</h2>
-              <Badge tone="neutral" className="ml-auto">{visualDetections.length} detected</Badge>
+              {live ? (
+                <Badge tone="accent" className="ml-auto">{issues.length} inaccessible frame{issues.length === 1 ? "" : "s"}</Badge>
+              ) : (
+                <Badge tone="neutral" className="ml-auto">{visualDetections.length} detected</Badge>
+              )}
             </div>
+
+            {/* Live backend results: frames the pipeline flagged as inaccessible. */}
+            {live && (
+              issues.length === 0 ? (
+                <div className="rounded-xl bg-ink-900/60 p-6 text-center text-sm text-mist-500 ring-hair">
+                  No inaccessible frames detected by the pipeline for this video.
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {issues.map((it, i) => (
+                    <motion.div
+                      key={`${it.frame_index}-${i}`}
+                      initial={{ opacity: 0, y: 12 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: i * 0.06 }}
+                      className="group overflow-hidden rounded-xl bg-ink-900/60 ring-hair transition-colors hover:bg-ink-800/70"
+                    >
+                      <div className="relative aspect-video bg-ink-800">
+                        <img
+                          src={frameUrl(it.frame_path)}
+                          alt={it.reason ?? "Flagged video frame"}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                        />
+                        <span className="absolute bottom-2 right-2 rounded-md bg-ink-950/70 px-1.5 py-0.5 font-mono text-[10px] text-mist-300">
+                          {fmtTime(it.timestamp)}
+                        </span>
+                      </div>
+                      <div className="p-4">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-amber-400" />
+                          <p className="text-sm font-semibold capitalize text-mist-100">
+                            {it.issue_type ?? "Visual content"}
+                          </p>
+                        </div>
+                        {it.reason && (
+                          <p className="mt-1 text-xs leading-relaxed text-mist-500">{it.reason}</p>
+                        )}
+                        {typeof it.change_score === "number" && (
+                          <div className="mt-3 flex items-center gap-2">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-ink-700">
+                              <div className="h-full rounded-full bg-accent-500/70" style={{ width: `${Math.min(it.change_score, 100)}%` }} />
+                            </div>
+                            <span className="font-mono text-[10px] text-mist-500">{Math.round(it.change_score)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )
+            )}
+
+            {!live && (
             <div className="grid gap-3 sm:grid-cols-2">
               {visualDetections.map((v, i) => {
                 const Icon = visualIcon[v.type];
@@ -166,6 +242,7 @@ export default function Analysis() {
                 );
               })}
             </div>
+            )}
           </MotionCard>
         </div>
 

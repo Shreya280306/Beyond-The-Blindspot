@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  UploadCloud, FileVideo, CheckCircle2, Loader2, ArrowRight, X, Film,
+  UploadCloud, FileVideo, CheckCircle2, Loader2, ArrowRight, X, Film, Info,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
@@ -10,6 +10,8 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { processingSteps, sampleVideo } from "@/lib/mock";
+import { uploadVideo, runPipeline } from "@/lib/api";
+import { saveResult, clearResult } from "@/lib/store";
 import { cn } from "@/lib/cn";
 
 type Phase = "idle" | "uploading" | "processing" | "done";
@@ -20,18 +22,58 @@ export default function Upload() {
   const [drag, setDrag] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stepIdx, setStepIdx] = useState(0);
+  const [fileName, setFileName] = useState<string>(`${sampleVideo.title}.mp4`);
+  const [demoMode, setDemoMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const modeRef = useRef<"real" | "mock">("mock");
 
-  const start = useCallback(() => {
+  // Sample lecture: pure front-end demo, no backend call.
+  const startMock = useCallback(() => {
+    modeRef.current = "mock";
+    setFileName(`${sampleVideo.title}.mp4`);
     setPhase("uploading");
     setProgress(0);
   }, []);
 
-  // upload progress
+  // Real file: hit the backend; fall back to the demo if it's unreachable.
+  const startReal = useCallback(async (file: File) => {
+    modeRef.current = "real";
+    clearResult();
+    setDemoMode(false);
+    setFileName(file.name);
+    setProgress(0);
+    setPhase("uploading");
+    try {
+      const up = await uploadVideo(file);
+      setProgress(100);
+      setPhase("processing");
+      const result = await runPipeline(up.job_id);
+      saveResult(result);
+      if (modeRef.current === "real") setPhase("done");
+    } catch {
+      // Backend down / errored — keep the demo alive with the sample run.
+      modeRef.current = "mock";
+      setDemoMode(true);
+      setProgress(0);
+      setPhase("uploading");
+    }
+  }, []);
+
+  const handleFile = useCallback(
+    (file: File | null) => {
+      if (file) startReal(file);
+      else startMock();
+    },
+    [startReal, startMock],
+  );
+
+  // Upload progress bar. Mock mode drives the phase change; real mode just
+  // animates up to ~95% while the real upload is in flight.
   useEffect(() => {
     if (phase !== "uploading") return;
     const id = setInterval(() => {
       setProgress((p) => {
+        if (modeRef.current === "real") return p >= 95 ? 95 : p + 6;
         if (p >= 100) {
           clearInterval(id);
           setPhase("processing");
@@ -43,15 +85,18 @@ export default function Upload() {
     return () => clearInterval(id);
   }, [phase]);
 
-  // processing steps
+  // Processing steps. Mock mode finishes by itself; real mode cycles the
+  // steps and waits at the last one until the API call resolves.
   useEffect(() => {
     if (phase !== "processing") return;
     setStepIdx(0);
     const id = setInterval(() => {
       setStepIdx((s) => {
         if (s >= processingSteps.length - 1) {
-          clearInterval(id);
-          setTimeout(() => setPhase("done"), 700);
+          if (modeRef.current === "mock") {
+            clearInterval(id);
+            setTimeout(() => setPhase("done"), 700);
+          }
           return s;
         }
         return s + 1;
@@ -61,6 +106,8 @@ export default function Upload() {
   }, [phase]);
 
   const reset = () => {
+    modeRef.current = "mock";
+    setDemoMode(false);
     setPhase("idle");
     setProgress(0);
     setStepIdx(0);
@@ -95,7 +142,7 @@ export default function Upload() {
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
                   onDragLeave={() => setDrag(false)}
-                  onDrop={(e) => { e.preventDefault(); setDrag(false); start(); }}
+                  onDrop={(e) => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files?.[0] ?? null); }}
                   onClick={() => inputRef.current?.click()}
                   className={cn(
                     "group relative grid cursor-pointer place-items-center rounded-2xl border-2 border-dashed p-14 text-center transition-all",
@@ -109,7 +156,7 @@ export default function Upload() {
                     type="file"
                     accept="video/*"
                     className="hidden"
-                    onChange={() => start()}
+                    onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
                   />
                   <div className="relative mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-ink-800 ring-hair">
                     <span className="absolute inset-0 rounded-2xl bg-accent-500/10 blur-md transition-opacity group-hover:opacity-100" />
@@ -124,7 +171,7 @@ export default function Upload() {
                   <div className="mt-6">
                     <Button
                       variant="outline"
-                      onClick={(e) => { e.stopPropagation(); start(); }}
+                      onClick={(e) => { e.stopPropagation(); handleFile(null); }}
                     >
                       <Film className="h-4 w-4" /> Use sample lecture
                     </Button>
@@ -147,7 +194,7 @@ export default function Upload() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-mist-100">
-                        {sampleVideo.title}.mp4
+                        {fileName}
                       </p>
                       <p className="text-xs text-mist-500">
                         {sampleVideo.size} · {sampleVideo.resolution} · {sampleVideo.duration}
@@ -162,6 +209,13 @@ export default function Upload() {
                       </Badge>
                     )}
                   </div>
+
+                  {demoMode && (
+                    <div className="mt-4 flex items-start gap-2 rounded-xl bg-amber-500/5 p-3 text-xs text-amber-300/90 ring-1 ring-inset ring-amber-500/20">
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      Backend not reachable — showing the sample analysis so you can preview the full experience.
+                    </div>
+                  )}
 
                   {/* upload progress */}
                   {phase === "uploading" && (
