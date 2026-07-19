@@ -10,11 +10,11 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { processingSteps, sampleVideo } from "@/lib/mock";
-import { uploadVideo, runPipeline, makeAccessible } from "@/lib/api";
-import { saveResult, clearResult, saveAccessibleVideo, clearAccessibleVideo } from "@/lib/store";
+import { uploadVideo, runPipeline } from "@/lib/api";
+import { saveResult, clearResult } from "@/lib/store";
 import { cn } from "@/lib/cn";
 
-type Phase = "idle" | "uploading" | "processing" | "building" | "done";
+type Phase = "idle" | "uploading" | "processing" | "done";
 
 export default function Upload() {
   const nav = useNavigate();
@@ -24,7 +24,6 @@ export default function Upload() {
   const [stepIdx, setStepIdx] = useState(0);
   const [fileName, setFileName] = useState<string>(`${sampleVideo.title}.mp4`);
   const [demoMode, setDemoMode] = useState(false);
-  const [buildError, setBuildError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const modeRef = useRef<"real" | "mock">("mock");
 
@@ -40,36 +39,16 @@ export default function Upload() {
   const startReal = useCallback(async (file: File) => {
     modeRef.current = "real";
     clearResult();
-    clearAccessibleVideo();
     setDemoMode(false);
-    setBuildError(null);
     setFileName(file.name);
     setProgress(0);
     setPhase("uploading");
     try {
-      // Step 1: upload — returns the job_id reused for every step below.
       const up = await uploadVideo(file);
       setProgress(100);
       setPhase("processing");
-
-      // Steps 2-6: chunk, extract frames/audio, transcribe, diff, analyze.
       const result = await runPipeline(up.job_id);
       saveResult(result);
-
-      // Steps 7-9: describe each flagged frame -> TTS -> build the final
-      // accessible .mp4. Same job_id as above, no re-entry needed.
-      setPhase("building");
-      try {
-        const accessibleVideo = await makeAccessible(up.job_id);
-        saveAccessibleVideo(accessibleVideo);
-      } catch (buildErr) {
-        // Analysis succeeded but the video build failed (e.g. missing TTS
-        // dependency, Gemini quota). Don't lose the analysis — just flag it.
-        setBuildError(
-          buildErr instanceof Error ? buildErr.message : "Couldn't build the accessible video.",
-        );
-      }
-
       if (modeRef.current === "real") setPhase("done");
     } catch {
       // Backend down / errored — keep the demo alive with the sample run.
@@ -129,7 +108,6 @@ export default function Upload() {
   const reset = () => {
     modeRef.current = "mock";
     setDemoMode(false);
-    setBuildError(null);
     setPhase("idle");
     setProgress(0);
     setStepIdx(0);
@@ -202,7 +180,7 @@ export default function Upload() {
               </motion.div>
             )}
 
-            {(phase === "uploading" || phase === "processing" || phase === "building" || phase === "done") && (
+            {(phase === "uploading" || phase === "processing" || phase === "done") && (
               <motion.div
                 key="status"
                 initial={{ opacity: 0, y: 12 }}
@@ -227,7 +205,7 @@ export default function Upload() {
                     ) : (
                       <Badge tone="neutral">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        {phase === "uploading" ? "Uploading" : phase === "building" ? "Building video" : "Processing"}
+                        {phase === "uploading" ? "Uploading" : "Processing"}
                       </Badge>
                     )}
                   </div>
@@ -236,13 +214,6 @@ export default function Upload() {
                     <div className="mt-4 flex items-start gap-2 rounded-xl bg-amber-500/5 p-3 text-xs text-amber-300/90 ring-1 ring-inset ring-amber-500/20">
                       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                       Backend not reachable — showing the sample analysis so you can preview the full experience.
-                    </div>
-                  )}
-
-                  {buildError && phase === "done" && (
-                    <div className="mt-4 flex items-start gap-2 rounded-xl bg-amber-500/5 p-3 text-xs text-amber-300/90 ring-1 ring-inset ring-amber-500/20">
-                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      Analysis finished, but the accessible video couldn't be built: {buildError}
                     </div>
                   )}
 
@@ -264,11 +235,11 @@ export default function Upload() {
                   )}
 
                   {/* processing steps */}
-                  {(phase === "processing" || phase === "building" || phase === "done") && (
+                  {(phase === "processing" || phase === "done") && (
                     <div className="mt-6 space-y-2">
                       {processingSteps.map((s, i) => {
                         const active = i === stepIdx && phase === "processing";
-                        const complete = phase === "building" || phase === "done" || i < stepIdx;
+                        const complete = phase === "done" || i < stepIdx;
                         return (
                           <div
                             key={s.key}
@@ -298,35 +269,6 @@ export default function Upload() {
                           </div>
                         );
                       })}
-                      {modeRef.current === "real" && (
-                        <div
-                          className={cn(
-                            "flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors",
-                            phase === "building" && "bg-accent-500/5 ring-1 ring-inset ring-accent-500/20",
-                          )}
-                        >
-                          <span className="grid h-6 w-6 shrink-0 place-items-center">
-                            {phase === "done" ? (
-                              <CheckCircle2 className="h-5 w-5 text-accent-400" />
-                            ) : phase === "building" ? (
-                              <Loader2 className="h-4 w-4 animate-spin text-accent-400" />
-                            ) : (
-                              <span className="h-2 w-2 rounded-full bg-ink-600" />
-                            )}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className={cn(
-                              "text-sm font-medium",
-                              phase === "building" || phase === "done" ? "text-mist-100" : "text-mist-600",
-                            )}>
-                              Building accessible video
-                            </p>
-                            {phase === "building" && (
-                              <p className="text-xs text-mist-500">Describing flagged frames · text-to-speech · re-encoding the .mp4</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
 
